@@ -203,7 +203,7 @@ int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obst
 int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
 {
   /* compute weighting factors */
-  float w1 = params.density * params.accel / 9.f;
+  float w1 = params.density * params.accel / 9.0f;
   float w2 = params.density * params.accel / 36.f;
 
   /* modify the 2nd row of the grid */
