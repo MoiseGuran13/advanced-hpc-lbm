@@ -3,7 +3,7 @@
 EXE=d2q9-bgk
 
 CC=gcc
-CFLAGS= -std=c99 -Wall -O3
+CFLAGS= -std=c99 -Wall -Ofast -mtune=native
 LIBS = -lm
 
 FINAL_STATE_FILE=./final_state.dat
@@ -23,3 +23,4 @@ check:
 
 clean:
 	rm -f $(EXE)
+	$(CC) -v
