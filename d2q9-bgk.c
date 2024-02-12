@@ -254,33 +254,31 @@ int reision(const t_param params, t_speed* cells, t_speed* temp_cells, int* obst
       int y_s = (j == 0) ? (j + params.ny - 1) : (j - 1);
       int x_w = (i == 0) ? (i + params.nx - 1) : (i - 1);
     
-      if (obstacles[index])
-        {
-          temp_cells[index].speeds[0] = cells[index].speeds[0];
-          temp_cells[index].speeds[1] = cells[x_e + j*params.nx].speeds[3]; /* west */
-          temp_cells[index].speeds[2] = cells[i + y_n*params.nx].speeds[4]; /* south */
-          temp_cells[index].speeds[3] = cells[x_w + j*params.nx].speeds[1]; /* east */
-          temp_cells[index].speeds[4] = cells[i + y_s*params.nx].speeds[2]; /* north */
-          temp_cells[index].speeds[5] = cells[x_e + y_n*params.nx].speeds[7];  /* south-west */
-          temp_cells[index].speeds[6] = cells[x_w + y_n*params.nx].speeds[8]; /* south-east */
-          temp_cells[index].speeds[7] = cells[x_w + y_s*params.nx].speeds[5]; /* north-east */
-          temp_cells[index].speeds[8] = cells[x_e + y_s*params.nx].speeds[6]; /* north-west */
-        }
-      else
-        {
-          const t_speed tmp_cell = {{
-            cells[index].speeds[0], /* central cell, no movement */
-            cells[x_w + j*params.nx].speeds[1], /* east */
-            cells[i + y_s*params.nx].speeds[2], /* north */
-            cells[x_e + j*params.nx].speeds[3], /* west */
-            cells[i + y_n*params.nx].speeds[4], /* south */
-            cells[x_w + y_s*params.nx].speeds[5], /* north-east */
-            cells[x_e + y_s*params.nx].speeds[6], /* north-west */
-            cells[x_e + y_n*params.nx].speeds[7], /* south-west */
-            cells[x_w + y_n*params.nx].speeds[8] /* south-east */
-          }};
+      if (obstacles[index]){
+        temp_cells[index].speeds[0] = cells[index].speeds[0];
+        temp_cells[index].speeds[1] = cells[x_e + j*params.nx].speeds[3]; /* west */
+        temp_cells[index].speeds[2] = cells[i + y_n*params.nx].speeds[4]; /* south */
+        temp_cells[index].speeds[3] = cells[x_w + j*params.nx].speeds[1]; /* east */
+        temp_cells[index].speeds[4] = cells[i + y_s*params.nx].speeds[2]; /* north */
+        temp_cells[index].speeds[5] = cells[x_e + y_n*params.nx].speeds[7];  /* south-west */
+        temp_cells[index].speeds[6] = cells[x_w + y_n*params.nx].speeds[8]; /* south-east */
+        temp_cells[index].speeds[7] = cells[x_w + y_s*params.nx].speeds[5]; /* north-east */
+        temp_cells[index].speeds[8] = cells[x_e + y_s*params.nx].speeds[6]; /* north-west */
+      }
+      else{
+        const t_speed tmp_cell = {{
+          cells[index].speeds[0], /* central cell, no movement */
+          cells[x_w + j*params.nx].speeds[1], /* east */
+          cells[i + y_s*params.nx].speeds[2], /* north */
+          cells[x_e + j*params.nx].speeds[3], /* west */
+          cells[i + y_n*params.nx].speeds[4], /* south */
+          cells[x_w + y_s*params.nx].speeds[5], /* north-east */
+          cells[x_e + y_s*params.nx].speeds[6], /* north-west */
+          cells[x_e + y_n*params.nx].speeds[7], /* south-west */
+          cells[x_w + y_n*params.nx].speeds[8] /* south-east */
+        }};
 
-          float local_density = 0.f;
+        float local_density = 0.f;
 
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
@@ -359,7 +357,7 @@ int reision(const t_param params, t_speed* cells, t_speed* temp_cells, int* obst
                                                   + params.omega
                                                   * (d_equ[kk] - tmp_cell.speeds[kk]);
         }
-        }
+      }
     }
   }
 
