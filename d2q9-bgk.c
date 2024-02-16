@@ -92,6 +92,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
 ** timestep calls, in order, the functions:
 ** accelerate_flow(), propagate(), rebound() & collision()
 */
+void pointer_swap(t_speed** A, t_speed** B);
 int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles);
 int accelerate_flow(const t_param params, t_speed* cells, int* obstacles);
 int reision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles);
@@ -192,6 +193,12 @@ int main(int argc, char* argv[])
   return EXIT_SUCCESS;
 }
 
+void pointer_swap(t_speed** A, t_speed** B){
+  t_speed* aux = *A;
+  *A = *B;
+  *B = aux;
+}
+
 int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
 {
   accelerate_flow(params, cells, obstacles);
@@ -200,9 +207,7 @@ int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obst
   // collision(params, cells, tmp_cells, obstacles);
 
   reision(params, cells, tmp_cells, obstacles);
-  t_speed* aux = cells;
-  cells = tmp_cells;
-  tmp_cells = aux;
+  pointer_swap(&cells, &tmp_cells);
 
   return EXIT_SUCCESS;
 }
