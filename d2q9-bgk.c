@@ -201,7 +201,7 @@ void pointer_swap(t_speed** A, t_speed** B){
   *B = aux;
 }
 
-int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
+int timestep(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles)
 {
   accelerate_flow(params, cells, obstacles);
   // propagate(params, cells, tmp_cells);
@@ -213,7 +213,7 @@ int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obst
   return EXIT_SUCCESS;
 }
 
-int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
+int accelerate_flow(const t_param params, t_speed* restrict cells, int* restrict obstacles)
 {
   /* compute weighting factors */
   const float w1 = params.density * params.accel / 9.0f;
@@ -245,13 +245,14 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
   return EXIT_SUCCESS;
 }
 
-int reision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles){
+int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles){
   const float c_sq = 1.f / 3.f; /* square of speed of sound */
   const float w0 = 4.f / 9.f;  /* weighting factor */
   const float w1 = 1.f / 9.f;  /* weighting factor */
   const float w2 = 1.f / 36.f;
  
  for (int j = 0; j < params.ny; j++){
+    #pragma omp simd
     for (int i = 0; i < params.nx; i++){
       const int index = i + j * params.nx;
       const t_speed snapshot = propagate_increment(params, cells, i, j);
@@ -358,7 +359,7 @@ int reision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obsta
   return EXIT_SUCCESS;
 }
 
-t_speed propagate_increment(const t_param params, t_speed* cells, const int i, const int j){
+t_speed propagate_increment(const t_param params, t_speed* restrict cells, const int i, const int j){
   t_speed result;
 
   const int y_n = (j + 1) % params.ny;
@@ -381,11 +382,12 @@ t_speed propagate_increment(const t_param params, t_speed* cells, const int i, c
   return result;
 }
 
-int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells)
+int propagate(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells)
 {
   /* loop over _all_ cells */
   for (int jj = 0; jj < params.ny; jj++)
   {
+    #pragma omp simd
     for (int ii = 0; ii < params.nx; ii++)
     {
       tmp_cells[ii + jj*params.nx] = propagate_increment(params, cells, ii, jj);
@@ -395,11 +397,12 @@ int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells)
   return EXIT_SUCCESS;
 }
 
-int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
+int rebound(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles)
 {
   /* loop over the cells in the grid */
   for (int jj = 0; jj < params.ny; jj++)
   {
+    #pragma omp simd
     for (int ii = 0; ii < params.nx; ii++)
     {
       /* if the cell contains an obstacle */
@@ -422,7 +425,7 @@ int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obsta
   return EXIT_SUCCESS;
 }
 
-int collision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles)
+int collision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles)
 {
   const float c_sq = 1.f / 3.f; /* square of speed of sound */
   const float w0 = 4.f / 9.f;  /* weighting factor */
@@ -435,6 +438,7 @@ int collision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obs
   ** are in the scratch-space grid */
   for (int jj = 0; jj < params.ny; jj++)
   {
+    #pragma omp simd
     for (int ii = 0; ii < params.nx; ii++)
     {
       /* don't consider occupied cells */
