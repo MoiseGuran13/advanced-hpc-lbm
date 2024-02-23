@@ -246,34 +246,46 @@ int accelerate_flow(const t_param params, t_speed* restrict cells, int* restrict
 }
 
 int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles){
-  const float c_sq = 1.f / 3.f; /* square of speed of sound */
-  const float w0 = 4.f / 9.f;  /* weighting factor */
-  const float w1 = 1.f / 9.f;  /* weighting factor */
-  const float w2 = 1.f / 36.f;
- 
  for (int j = 0; j < params.ny; j++){
-    #pragma omp simd
+    // #pragma omp simd
     for (int i = 0; i < params.nx; i++){
-      const int index = i + j * params.nx;
-      const t_speed snapshot = propagate_increment(params, cells, i, j);
+      int index = i + j * params.nx;
     
+      const int y_n = (j + 1) % params.ny;
+      const int x_e = (i + 1) % params.nx;
+      const int y_s = (j == 0) ? (j + params.ny - 1) : (j - 1);
+      const int x_w = (i == 0) ? (i + params.nx - 1) : (i - 1);
+
       if (obstacles[index])
       {
         /* called after propagate, so taking values from scratch space
         ** mirroring, and writing into main grid */
-        tmp_cells[index].speeds[1] = snapshot.speeds[3];
-        tmp_cells[index].speeds[2] = snapshot.speeds[4];
-        tmp_cells[index].speeds[3] = snapshot.speeds[1];
-        tmp_cells[index].speeds[4] = snapshot.speeds[2];
-        tmp_cells[index].speeds[5] = snapshot.speeds[7];
-        tmp_cells[index].speeds[6] = snapshot.speeds[8];
-        tmp_cells[index].speeds[7] = snapshot.speeds[5];
-        tmp_cells[index].speeds[8] = snapshot.speeds[6];
+        tmp_cells[index].speeds[0] = cells[index].speeds[0];
+        tmp_cells[index].speeds[3] = cells[x_w + j*params.nx].speeds[1];
+        tmp_cells[index].speeds[4] = cells[i + y_s*params.nx].speeds[2];
+        tmp_cells[index].speeds[1] = cells[x_e + j*params.nx].speeds[3];
+        tmp_cells[index].speeds[2] = cells[i + y_n*params.nx].speeds[4];
+        tmp_cells[index].speeds[7] = cells[x_w + y_s*params.nx].speeds[5];
+        tmp_cells[index].speeds[8] = cells[x_e + y_s*params.nx].speeds[6];
+        tmp_cells[index].speeds[5] = cells[x_e + y_n*params.nx].speeds[7];
+        tmp_cells[index].speeds[6] = cells[x_w + y_n*params.nx].speeds[8];
       }
       else
       {
         /* compute local density total */
         float local_density = 0.f;
+        const t_speed snapshot = {{
+            cells[i + j * params.nx].speeds[0],
+            cells[x_w + j*params.nx].speeds[1],
+            cells[i + y_s*params.nx].speeds[2],
+            cells[x_e + j*params.nx].speeds[3],
+            cells[i + y_n*params.nx].speeds[4],
+            cells[x_w + y_s*params.nx].speeds[5],
+            cells[x_e + y_s*params.nx].speeds[6],
+            cells[x_e + y_n*params.nx].speeds[7],
+            cells[x_w + y_n*params.nx].speeds[8]
+          }
+        };
 
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
@@ -286,16 +298,14 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
                       + snapshot.speeds[8]
                       - (snapshot.speeds[3]
                          + snapshot.speeds[6]
-                         + snapshot.speeds[7]))
-                     / local_density;
+                         + snapshot.speeds[7]));
         /* compute y velocity component */
         const float u_y = (snapshot.speeds[2]
                       + snapshot.speeds[5]
                       + snapshot.speeds[6]
                       - (snapshot.speeds[4]
                          + snapshot.speeds[7]
-                         + snapshot.speeds[8]))
-                     / local_density;
+                         + snapshot.speeds[8]));
 
         /* velocity squared */
         const float u_sq = u_x * u_x + u_y * u_y;
@@ -313,44 +323,26 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
           u_x - u_y
         };
 
-        /* equilibrium densities */
-        const float d_equ[NSPEEDS] = {
-        /* zero velocity density: weight w0 */
-          w0 * local_density
-                   * (1.f - u_sq / (2.f * c_sq)),
-        /* axis speeds: weight w1 */
-          w1 * local_density * (1.f + u[1] / c_sq
-                                         + (u[1] * u[1]) / (2.f * c_sq * c_sq)
-                                         - u_sq / (2.f * c_sq)),
-          w1 * local_density * (1.f + u[2] / c_sq
-                                         + (u[2] * u[2]) / (2.f * c_sq * c_sq)
-                                         - u_sq / (2.f * c_sq)),
-          w1 * local_density * (1.f + u[3] / c_sq
-                                         + (u[3] * u[3]) / (2.f * c_sq * c_sq)
-                                         - u_sq / (2.f * c_sq)),
-          w1 * local_density * (1.f + u[4] / c_sq
-                                         + (u[4] * u[4]) / (2.f * c_sq * c_sq)
-                                         - u_sq / (2.f * c_sq)),
-        /* diagonal speeds: weight w2 */
-          w2 * local_density * (1.f + u[5] / c_sq
-                                         + (u[5] * u[5]) / (2.f * c_sq * c_sq)
-                                         - u_sq / (2.f * c_sq)),
-          w2 * local_density * (1.f + u[6] / c_sq
-                                         + (u[6] * u[6]) / (2.f * c_sq * c_sq)
-                                         - u_sq / (2.f * c_sq)),
-          w2 * local_density * (1.f + u[7] / c_sq
-                                         + (u[7] * u[7]) / (2.f * c_sq * c_sq)
-                                         - u_sq / (2.f * c_sq)),
-          w2 * local_density * (1.f + u[8] / c_sq
-                                         + (u[8] * u[8]) / (2.f * c_sq * c_sq)
-                                         - u_sq / (2.f * c_sq))
-        };
-        /* relaxation step */
-        for (int kk = 0; kk < NSPEEDS; kk++)
+        const float c_sq = 3.f; /* square of speed of sound */
+        const float w0 = 4.f / 9.f;  /* weighting factor          */
+        const float w1 = 1.f / 9.f;  /* weighting factor          */
+        const float w2 = 1.f / 36.f; /*                           */
+
+        tmp_cells[index].speeds[0] = snapshot.speeds[0] + params.omega 
+                                     * (w0 * (local_density - u_sq * c_sq / (2.f * local_density)) - snapshot.speeds[0]);
+
+        for (int kk = 1; kk < 5; kk++){
+          tmp_cells[index].speeds[kk] = snapshot.speeds[kk] + params.omega
+                                        * (w1 * (local_density + u[kk] * c_sq + (u[kk] * u[kk] * c_sq * c_sq) / (2.f * local_density) 
+                                        - u_sq * c_sq / (2.f * local_density)) - snapshot.speeds[kk]);
+        }
+        
+        // #pragma omp simd
+        for (int kk = 5; kk < NSPEEDS; kk++)
         {
-          tmp_cells[index].speeds[kk] = snapshot.speeds[kk]
-                                                  + params.omega
-                                                  * (d_equ[kk] - snapshot.speeds[kk]);
+          tmp_cells[index].speeds[kk] = snapshot.speeds[kk] + params.omega
+                                        * (w2 * (local_density + u[kk] * c_sq + (u[kk] * u[kk] * c_sq * c_sq) / (2.f * local_density) 
+                                        - u_sq * c_sq / (2.f * local_density)) - snapshot.speeds[kk]);
         }
       }
     }
