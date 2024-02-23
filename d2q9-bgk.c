@@ -249,7 +249,7 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
  for (int j = 0; j < params.ny; j++){
     // #pragma omp simd
     for (int i = 0; i < params.nx; i++){
-      int index = i + j * params.nx;
+      const int index = i + j * params.nx;
     
       const int y_n = (j + 1) % params.ny;
       const int x_e = (i + 1) % params.nx;
@@ -273,7 +273,6 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
       else
       {
         /* compute local density total */
-        float local_density = 0.f;
         const t_speed snapshot = {{
             cells[i + j * params.nx].speeds[0],
             cells[x_w + j*params.nx].speeds[1],
@@ -286,11 +285,6 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
             cells[x_w + y_n*params.nx].speeds[8]
           }
         };
-
-        for (int kk = 0; kk < NSPEEDS; kk++)
-        {
-          local_density += snapshot.speeds[kk];
-        }
 
         /* compute x velocity component */
         const float u_x = (snapshot.speeds[1]
@@ -328,21 +322,26 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
         const float w1 = 1.f / 9.f;  /* weighting factor          */
         const float w2 = 1.f / 36.f; /*                           */
 
-        tmp_cells[index].speeds[0] = snapshot.speeds[0] + params.omega 
-                                     * (w0 * (local_density - u_sq * c_sq / (2.f * local_density)) - snapshot.speeds[0]);
+        float local_density = 0.f;
+        for (int kk = 0; kk < NSPEEDS; kk++)
+        {
+          local_density += snapshot.speeds[kk];
+        }
+        const float factor = local_density - (u_sq * c_sq) / (2.f * local_density);
+
+
+        tmp_cells[index].speeds[0] = snapshot.speeds[0] * (1 - params.omega) + params.omega * w0 * factor; 
 
         for (int kk = 1; kk < 5; kk++){
-          tmp_cells[index].speeds[kk] = snapshot.speeds[kk] + params.omega
-                                        * (w1 * (local_density + u[kk] * c_sq + (u[kk] * u[kk] * c_sq * c_sq) / (2.f * local_density) 
-                                        - u_sq * c_sq / (2.f * local_density)) - snapshot.speeds[kk]);
+          tmp_cells[index].speeds[kk] = snapshot.speeds[kk] * (1 - params.omega) + params.omega * w1 * 
+                                        (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor);
         }
         
         // #pragma omp simd
         for (int kk = 5; kk < NSPEEDS; kk++)
         {
-          tmp_cells[index].speeds[kk] = snapshot.speeds[kk] + params.omega
-                                        * (w2 * (local_density + u[kk] * c_sq + (u[kk] * u[kk] * c_sq * c_sq) / (2.f * local_density) 
-                                        - u_sq * c_sq / (2.f * local_density)) - snapshot.speeds[kk]);
+          tmp_cells[index].speeds[kk] = snapshot.speeds[kk] * (1 - params.omega) + params.omega * w2 * 
+                                        (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor);
         }
       }
     }
