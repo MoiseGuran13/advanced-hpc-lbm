@@ -59,6 +59,7 @@
 #define NSPEEDS         9
 #define FINALSTATEFILE  "final_state.dat"
 #define AVVELSFILE      "av_vels.dat"
+#define OMP_NUM_THREADS 28
 
 /* struct to hold the parameter values */
 typedef struct
@@ -246,8 +247,9 @@ int accelerate_flow(const t_param params, t_speed* restrict cells, int* restrict
 }
 
 int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles){
+ #pragma omp parallel for num_threads(1)
  for (int j = 0; j < params.ny; j++){
-    // #pragma omp simd
+    #pragma omp simd
     for (int i = 0; i < params.nx; i++){
       const int index = i + j * params.nx;
     
@@ -323,6 +325,7 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
         const float w2 = 1.f / 36.f; /*                           */
 
         float local_density = 0.f;
+        #pragma omp simd
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
           local_density += snapshot.speeds[kk];
@@ -332,12 +335,13 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
 
         tmp_cells[index].speeds[0] = snapshot.speeds[0] * (1 - params.omega) + params.omega * w0 * factor; 
 
+        #pragma omp simd
         for (int kk = 1; kk < 5; kk++){
           tmp_cells[index].speeds[kk] = snapshot.speeds[kk] * (1 - params.omega) + params.omega * w1 * 
                                         (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor);
         }
         
-        // #pragma omp simd
+        #pragma omp simd
         for (int kk = 5; kk < NSPEEDS; kk++)
         {
           tmp_cells[index].speeds[kk] = snapshot.speeds[kk] * (1 - params.omega) + params.omega * w2 * 
