@@ -2,18 +2,19 @@
 
 EXE=d2q9-bgk
 
-CC=icc
-CFLAGS= -std=c99 -w2 -Ofast -xAVX -fopenmp
+CC=gcc
+CFLAGS= -std=c99 -Wall -Ofast -mtune=native -fopenmp -pg
 LIBS = -lm
 
 FINAL_STATE_FILE=./final_state.dat
 AV_VELS_FILE=./av_vels.dat
-REF_FINAL_STATE_FILE=check/256x256.final_state.dat
-REF_AV_VELS_FILE=check/256x256.av_vels.dat
+REF_FINAL_STATE_FILE=check/128x128.final_state.dat
+REF_AV_VELS_FILE=check/128x128.av_vels.dat
 
 all: $(EXE)
 
 $(EXE): $(EXE).c
+	$(CC) -v
 	$(CC) $(CFLAGS) $^ $(LIBS) -o $@ 
 
 check:
