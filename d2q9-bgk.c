@@ -93,9 +93,9 @@ int initialise(const char* paramfile, const char* obstaclefile,
 ** accelerate_flow(), propagate(), rebound() & collision()
 */
 void pointer_swap(t_speed** A, t_speed** B);
-int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles);
+int timestep(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles, float* av_velocity);
 int accelerate_flow(const t_param params, t_speed* cells, int* obstacles);
-int reision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles);
+int reision(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles, float* av_velocity);
 t_speed propagate_increment(const t_param params, t_speed* cells, const int i, const int j);
 int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells);
 int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obstacles);
@@ -160,9 +160,9 @@ int main(int argc, char* argv[])
 
   for (int tt = 0; tt < params.maxIters; tt++)
   {
-    timestep(params, cells, tmp_cells, obstacles);
+    timestep(params, cells, tmp_cells, obstacles, &av_vels[tt]);
     pointer_swap(&cells, &tmp_cells);
-    av_vels[tt] = av_velocity(params, cells, obstacles);
+    // av_vels[tt] = av_velocity(params, cells, obstacles);
 #ifdef DEBUG
     printf("==timestep: %d==\n", tt);
     printf("av velocity: %.12E\n", av_vels[tt]);
@@ -201,14 +201,14 @@ void pointer_swap(t_speed** A, t_speed** B){
   *B = aux;
 }
 
-int timestep(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles)
+int timestep(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles, float* av_velocity)
 {
   accelerate_flow(params, cells, obstacles);
   // propagate(params, cells, tmp_cells);
   // rebound(params, cells, tmp_cells, obstacles);
   // collision(params, cells, tmp_cells, obstacles);
 
-  reision(params, cells, tmp_cells, obstacles);
+  reision(params, cells, tmp_cells, obstacles, av_velocity);
 
   return EXIT_SUCCESS;
 }
@@ -245,8 +245,11 @@ int accelerate_flow(const t_param params, t_speed* restrict cells, int* restrict
   return EXIT_SUCCESS;
 }
 
-int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles){
- for (int j = 0; j < params.ny; j++){
+int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp_cells, int* restrict obstacles, float* av_velocity){
+  int counter = 0;
+  *av_velocity = 0;
+
+  for (int j = 0; j < params.ny; j++){
     // #pragma omp simd
     for (int i = 0; i < params.nx; i++){
       const int index = i + j * params.nx;
@@ -272,6 +275,7 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
       }
       else
       {
+        counter++;
         /* compute local density total */
         const t_speed snapshot = {{
             cells[i + j * params.nx].speeds[0],
@@ -329,7 +333,6 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
         }
         const float factor = local_density - (u_sq * c_sq) / (2.f * local_density);
 
-
         tmp_cells[index].speeds[0] = snapshot.speeds[0] * (1 - params.omega) + params.omega * w0 * factor; 
 
         for (int kk = 1; kk < 5; kk++){
@@ -343,6 +346,14 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
           tmp_cells[index].speeds[kk] = snapshot.speeds[kk] * (1 - params.omega) + params.omega * w2 * 
                                         (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor);
         }
+
+        float vel_density = 0.f;
+        for (int kk = 0; kk < NSPEEDS; kk++)
+        {
+          vel_density += tmp_cells[index].speeds[kk];
+        }
+
+        *av_velocity = ((counter - 1) * *av_velocity + sqrtf(((u_x * u_x) + (u_y * u_y))/(vel_density * vel_density)))/counter;
       }
     }
   }
