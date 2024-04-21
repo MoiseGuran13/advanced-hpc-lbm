@@ -226,20 +226,20 @@ int accelerate_flow(const t_param params, t_speed* restrict cells, int* restrict
   {
     /* if the cell is not occupied and
     ** we don't send a negative density */
-    if (!obstacles[ii + jj*params.nx]
+    int boolean = !obstacles[ii + jj*params.nx]
         && (cells[ii + jj*params.nx].speeds[3] - w1) > 0.f
         && (cells[ii + jj*params.nx].speeds[6] - w2) > 0.f
-        && (cells[ii + jj*params.nx].speeds[7] - w2) > 0.f)
-    {
-      /* increase 'east-side' densities */
-      cells[ii + jj*params.nx].speeds[1] += w1;
-      cells[ii + jj*params.nx].speeds[5] += w2;
-      cells[ii + jj*params.nx].speeds[8] += w2;
-      /* decrease 'west-side' densities */
-      cells[ii + jj*params.nx].speeds[3] -= w1;
-      cells[ii + jj*params.nx].speeds[6] -= w2;
-      cells[ii + jj*params.nx].speeds[7] -= w2;
-    }
+        && (cells[ii + jj*params.nx].speeds[7] - w2) > 0.f;
+    
+    /* increase 'east-side' densities */
+    cells[ii + jj*params.nx].speeds[1] += w1 * boolean;
+    cells[ii + jj*params.nx].speeds[5] += w2 * boolean;
+    cells[ii + jj*params.nx].speeds[8] += w2 * boolean;
+    /* decrease 'west-side' densities */
+    cells[ii + jj*params.nx].speeds[3] -= w1 * boolean;
+    cells[ii + jj*params.nx].speeds[6] -= w2 * boolean;
+    cells[ii + jj*params.nx].speeds[7] -= w2 * boolean;
+    
   }
 
   return EXIT_SUCCESS;
@@ -334,10 +334,12 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
         const float factor = local_density - (u_sq * c_sq) / (2.f * local_density);
 
         tmp_cells[index].speeds[0] = snapshot.speeds[0] * (1 - params.omega) + params.omega * w0 * factor; 
+        float vel_density = tmp_cells[index].speeds[0];
 
         for (int kk = 1; kk < 5; kk++){
           tmp_cells[index].speeds[kk] = snapshot.speeds[kk] * (1 - params.omega) + params.omega * w1 * 
                                         (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor);
+          vel_density += tmp_cells[index].speeds[kk];
         }
         
         // #pragma omp simd
@@ -345,11 +347,6 @@ int reision(const t_param params, t_speed* restrict cells, t_speed* restrict tmp
         {
           tmp_cells[index].speeds[kk] = snapshot.speeds[kk] * (1 - params.omega) + params.omega * w2 * 
                                         (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor);
-        }
-
-        float vel_density = 0.f;
-        for (int kk = 0; kk < NSPEEDS; kk++)
-        {
           vel_density += tmp_cells[index].speeds[kk];
         }
 
