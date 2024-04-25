@@ -207,6 +207,13 @@ int timestep(const t_param params, t_speed cells, t_speed tmp_cells, int* restri
 
 int accelerate_flow(const t_param params, t_speed cells, int* restrict obstacles)
 {
+  __assume(params.nx % 64 == 0);
+  __assume(params.ny % 64 == 0);
+  for (int kk = 0; kk < NSPEEDS; kk++){
+    __assume_aligned(cells.speeds[kk], 64);
+  }
+  __assume_aligned(obstacles, 64);
+
   /* compute weighting factors */
   const float w1 = params.density * params.accel / 9.0f;
   const float w2 = params.density * params.accel / 36.f;
@@ -214,6 +221,7 @@ int accelerate_flow(const t_param params, t_speed cells, int* restrict obstacles
   /* modify the 2nd row of the grid */
   const int jj = params.ny - 2;
 
+  #pragma omp simd
   for (int ii = 0; ii < params.nx; ii++)
   {
     /* if the cell is not occupied and
@@ -238,19 +246,24 @@ int accelerate_flow(const t_param params, t_speed cells, int* restrict obstacles
 }
 
 int reision(const t_param params, t_speed cells, t_speed tmp_cells, int* restrict obstacles, float* av_velocity){
-  // __assume(params.nx % 64 == 0);
-  // __assume(params.ny % 64 == 0);
-  // for (int kk = 0; kk < NSPEEDS; kk++){
-  //   __assume_aligned(cells.speeds[kk], 64);
-  //   __assume_aligned(tmp_cells.speeds[kk], 64);
-  // }
-  // __assume_aligned(obstacles, 64);
+  __assume(params.nx % 64 == 0);
+  __assume(params.ny % 64 == 0);
+  for (int kk = 0; kk < NSPEEDS; kk++){
+    __assume_aligned(cells.speeds[kk], 64);
+    __assume_aligned(tmp_cells.speeds[kk], 64);
+  }
+  __assume_aligned(obstacles, 64);
   
-  int counter = 0;
-  *av_velocity = 0;
+  float counter = 0.0;
+  float local_velocity = 0.0;
+
+  const float c_sq = 3.f; /* square of speed of sound */
+  const float w0 = 4.f / 9.f;  /* weighting factor          */
+  const float w1 = 1.f / 9.f;  /* weighting factor          */
+  const float w2 = 1.f / 36.f; /*                           */
 
   for (int j = 0; j < params.ny; j++){
-    // #pragma omp simd
+    #pragma omp simd reduction(+:local_velocity) reduction(+:counter)
     for (int i = 0; i < params.nx; i++){
       const int index = i + j * params.nx;
     
@@ -259,23 +272,22 @@ int reision(const t_param params, t_speed cells, t_speed tmp_cells, int* restric
       const int y_s = (j == 0) ? (j + params.ny - 1) : (j - 1);
       const int x_w = (i == 0) ? (i + params.nx - 1) : (i - 1);
 
-      if (obstacles[index])
-      {
+      const float boolean = obstacles[index] ? 1.0 : 0.0;
+      counter += 1 - boolean;
+
+      
         /* called after propagate, so taking values from scratch space
         ** mirroring, and writing into main grid */
-        tmp_cells.speeds[0][index] = cells.speeds[0][index];
-        tmp_cells.speeds[3][index] = cells.speeds[1][x_w + j*params.nx];
-        tmp_cells.speeds[4][index] = cells.speeds[2][i + y_s*params.nx];
-        tmp_cells.speeds[1][index] = cells.speeds[3][x_e + j*params.nx];
-        tmp_cells.speeds[2][index] = cells.speeds[4][i + y_n*params.nx];
-        tmp_cells.speeds[7][index] = cells.speeds[5][x_w + y_s*params.nx];
-        tmp_cells.speeds[8][index] = cells.speeds[6][x_e + y_s*params.nx];
-        tmp_cells.speeds[5][index] = cells.speeds[7][x_e + y_n*params.nx];
-        tmp_cells.speeds[6][index] = cells.speeds[8][x_w + y_n*params.nx];
-      }
-      else
-      {
-        counter++;
+        tmp_cells.speeds[0][index] = cells.speeds[0][index] * boolean;
+        tmp_cells.speeds[3][index] = cells.speeds[1][x_w + j*params.nx] * boolean;
+        tmp_cells.speeds[4][index] = cells.speeds[2][i + y_s*params.nx] * boolean;
+        tmp_cells.speeds[1][index] = cells.speeds[3][x_e + j*params.nx] * boolean;
+        tmp_cells.speeds[2][index] = cells.speeds[4][i + y_n*params.nx] * boolean;
+        tmp_cells.speeds[7][index] = cells.speeds[5][x_w + y_s*params.nx] * boolean;
+        tmp_cells.speeds[8][index] = cells.speeds[6][x_e + y_s*params.nx] * boolean;
+        tmp_cells.speeds[5][index] = cells.speeds[7][x_e + y_n*params.nx] * boolean;
+        tmp_cells.speeds[6][index] = cells.speeds[8][x_w + y_n*params.nx] * boolean;
+
         /* compute local density total */
         const float snapshot[9] = {
             cells.speeds[0][i + j * params.nx],
@@ -321,39 +333,39 @@ int reision(const t_param params, t_speed cells, t_speed tmp_cells, int* restric
           u_x - u_y
         };
 
-        const float c_sq = 3.f; /* square of speed of sound */
-        const float w0 = 4.f / 9.f;  /* weighting factor          */
-        const float w1 = 1.f / 9.f;  /* weighting factor          */
-        const float w2 = 1.f / 36.f; /*                           */
-
         float local_density = 0.f;
+        #pragma omp simd
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
           local_density += snapshot[kk];
         }
         const float factor = local_density - (u_sq * c_sq) / (2.f * local_density);
 
-        tmp_cells.speeds[0][index] = snapshot[0] * (1 - params.omega) + params.omega * w0 * factor; 
+        tmp_cells.speeds[0][index] += (snapshot[0] * (1 - params.omega) + params.omega * w0 * factor) * !boolean; 
         float vel_density = tmp_cells.speeds[0][index];
 
+        #pragma omp simd reduction(+:vel_density)
         for (int kk = 1; kk < 5; kk++){
-          tmp_cells.speeds[kk][index] = snapshot[kk] * (1 - params.omega) + params.omega * w1 * 
-                                        (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor);
+          tmp_cells.speeds[kk][index] += (snapshot[kk] * (1 - params.omega) + params.omega * w1 * 
+                                        (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor)) * !boolean;
           vel_density += tmp_cells.speeds[kk][index];
         }
         
-        // #pragma omp simd
+        #pragma omp simd reduction(+:vel_density)
         for (int kk = 5; kk < NSPEEDS; kk++)
         {
-          tmp_cells.speeds[kk][index] = snapshot[kk] * (1 - params.omega) + params.omega * w2 * 
-                                        (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor);
+          tmp_cells.speeds[kk][index] += (snapshot[kk] * (1 - params.omega) + params.omega * w2 * 
+                                        (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor)) * !boolean;
           vel_density += tmp_cells.speeds[kk][index];
         }
 
-        *av_velocity = ((counter - 1) * *av_velocity + sqrtf(((u_x * u_x) + (u_y * u_y))/(vel_density * vel_density)))/counter;
-      }
+        local_velocity += boolean ? 0 : sqrtf(((u_x * u_x) + (u_y * u_y))/(vel_density * vel_density));
+      
     }
   }
+
+  // if (counter == 0) counter++;
+  *av_velocity = local_velocity/counter;
 
   return EXIT_SUCCESS;
 }
@@ -369,6 +381,7 @@ float av_velocity(const t_param params, t_speed cells, int* obstacles)
   /* loop over all non-blocked cells */
   for (int jj = 0; jj < params.ny; jj++)
   {
+    #pragma omp simd
     for (int ii = 0; ii < params.nx; ii++)
     {
       /* ignore occupied cells */
@@ -482,7 +495,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* main grid */
 
   for (int kk = 0; kk < NSPEEDS; kk++){
-    (*cells_ptr).speeds[kk] = (float*)malloc(sizeof(float) * (params->ny * params->nx));
+    (*cells_ptr).speeds[kk] = (float*)_mm_malloc(sizeof(float) * (params->ny * params->nx), 64);
 
     if ((*cells_ptr).speeds[kk] == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);
   }
@@ -490,14 +503,14 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* 'helper' grid, used as scratch space */
 
   for (int kk = 0; kk < NSPEEDS; kk++){
-    (*tmp_cells_ptr).speeds[kk] = (float*)malloc(sizeof(float) * (params->ny * params->nx));
+    (*tmp_cells_ptr).speeds[kk] = (float*)_mm_malloc(sizeof(float) * (params->ny * params->nx), 64);
 
     if ((*tmp_cells_ptr).speeds[kk] == NULL) die("cannot allocate memory for tmp_cells", __LINE__, __FILE__);
   }
 
 
   /* the map of obstacles */
-  *obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
+  *obstacles_ptr = _mm_malloc(sizeof(int) * (params->ny * params->nx), 64);
 
   if (*obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
 
@@ -578,16 +591,16 @@ int finalise(const t_param* params, t_speed* cells_ptr, t_speed* tmp_cells_ptr,
   ** free up allocated memory
   */
   for (int kk = 0; kk < NSPEEDS; kk++){
-    free((*cells_ptr).speeds[kk]);
+    _mm_free((*cells_ptr).speeds[kk]);
     (*cells_ptr).speeds[kk] = NULL;
   }
 
   for (int kk = 0; kk < NSPEEDS; kk++){
-    free((*tmp_cells_ptr).speeds[kk]);
+    _mm_free((*tmp_cells_ptr).speeds[kk]);
     (*tmp_cells_ptr).speeds[kk] = NULL;
   }
 
-  free(*obstacles_ptr);
+  _mm_free(*obstacles_ptr);
   *obstacles_ptr = NULL;
 
   free(*av_vels_ptr);
