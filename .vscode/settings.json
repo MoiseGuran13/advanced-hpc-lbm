@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "math.h": "c",
+        "mathcalls.h": "c",
+        "huge_vall.h": "c",
+        "features.h": "c",
+        "random": "c"
+    }
+}
