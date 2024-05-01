@@ -55,15 +55,32 @@
 #include <time.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include "mpi.h"
 
+#define SMALLBUFFSIZE   2
 #define ALIGNMENT       64
 #define NSPEEDS         9
 #define FINALSTATEFILE  "final_state.dat"
 #define AVVELSFILE      "av_vels.dat"
+#define MASTER          0
+#define c_sq            1.f / 3.f /* square of speed of sound */
 
-  const float c_sq = 3.f; /* square of speed of sound */
-  const int lookup[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
-  const float W[NSPEEDS] = {4.f / 9.f, 1.f / 9.f, 1.f / 9.f, 1.f / 9.f, 1.f / 9.f, 1.f / 36.f, 1.f / 36.f, 1.f / 36.f, 1.f / 36.f};
+const int lookup[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
+const float W[NSPEEDS] = {4.f / 9.f, 1.f / 9.f, 1.f / 9.f, 1.f / 9.f, 1.f / 9.f, 1.f / 36.f, 1.f / 36.f, 1.f / 36.f, 1.f / 36.f};  
+
+int rank, size, n_rows, start, finish;
+float *send_line_buffer;
+float *rece_line_buffer;
+float *small_buffer;
+
+MPI_Status status;
+
+typedef struct
+{
+  float x;
+  float y;
+} t_tuple;
+
 
 /* struct to hold the parameter values */
 typedef struct
@@ -111,7 +128,7 @@ int finalise(const t_param* params, float** cells_ptr, float** tmp_cells_ptr,
 float total_density(const t_param params, const float* restrict cells);
 
 /* compute average velocity */
-float av_velocity(const t_param params, const float* restrict cells, const int* restrict obstacles);
+t_tuple av_velocity(const t_param params, const float* restrict cells, const int* restrict obstacles);
 
 /* calculate Reynolds number */
 float calc_reynolds(const t_param params, float* cells, int* obstacles);
@@ -126,6 +143,29 @@ void usage(const char* exe);
 */
 int main(int argc, char* argv[])
 {
+  int flag;               /* for checking whether MPI_Init() has been called */
+  enum bool {FALSE,TRUE}; /* enumerated type: false = 0, true = 1 */  
+
+  /* initialise our MPI environment */
+  MPI_Init( &argc, &argv );
+
+  /* check whether the initialisation was successful */
+  MPI_Initialized(&flag);
+  if ( flag != TRUE ) {
+    MPI_Abort(MPI_COMM_WORLD,EXIT_FAILURE);
+  }
+
+  /* 
+  ** determine the SIZE of the group of processes associated with
+  ** the 'communicator'.  MPI_COMM_WORLD is the default communicator
+  ** consisting of all the processes in the launched MPI 'job'
+  */
+  MPI_Comm_size( MPI_COMM_WORLD, &size );
+  
+  /* determine the RANK of the current process [0:SIZE-1] */
+  MPI_Comm_rank( MPI_COMM_WORLD, &rank );
+  // printf("Process %d activated!", rank);
+
   char*    paramfile = NULL;    /* name of the input parameter file */
   char*    obstaclefile = NULL; /* name of a the input obstacle file */
   t_param  params;              /* struct to hold parameter values */
@@ -153,6 +193,14 @@ int main(int argc, char* argv[])
   init_tic=tot_tic;
   initialise(paramfile, obstaclefile, &params, &cells, &tmp_cells, &obstacles, &av_vels);
 
+  n_rows = params.ny / size;
+  start = rank * n_rows  ;
+  finish = rank == size - 1 ? params.ny : (rank + 1) *  n_rows;
+  send_line_buffer = (float*)malloc(sizeof(float) * params.nx * NSPEEDS);
+  rece_line_buffer = (float*)malloc(sizeof(float) * params.nx * NSPEEDS);
+  small_buffer = (float*)malloc(sizeof(float) * SMALLBUFFSIZE);
+  // printf("%d______%d______%d\n", n_rows, start, finish);
+
   /* Init time stops here, compute time starts*/
   gettimeofday(&timstr, NULL);
   init_toc = timstr.tv_sec + (timstr.tv_usec / 1000000.0);
@@ -176,11 +224,43 @@ int main(int argc, char* argv[])
   col_tic=comp_toc;
 
   // Collate data from ranks here 
+  if (rank != MASTER) {
+    float *send_buffer = (float*)malloc(sizeof(float) * (finish - start) * NSPEEDS * params.nx);
+    for (int i = 0; i < (finish - start) * params.nx; i++){
+      for (int kk = 0; kk < NSPEEDS; kk++){
+        send_buffer[i + (finish - start) * params.nx * kk] = cells[kk * params.nx * params.ny + i + start * params.nx];
+      }
+    }
+    MPI_Send(send_buffer, (finish - start) * NSPEEDS * params.nx, MPI_FLOAT, MASTER, 0, MPI_COMM_WORLD);
+    free(send_buffer);
+    send_buffer = NULL;
+  }
+  else {
+    for (int i = 0; i < size; i++){
+      if (i != MASTER){
+        int ffinish = i == size - 1 ? params.ny : (i + 1) *  n_rows;
+        float* rece_buffer = (float*)malloc(sizeof(float) * (ffinish - i * n_rows) * NSPEEDS * params.nx);
+
+        MPI_Recv(rece_buffer, (ffinish - i * n_rows) * NSPEEDS * params.nx, MPI_FLOAT, i, 0, MPI_COMM_WORLD, &status);
+        for (int index = 0; index < (ffinish - i * n_rows) * params.nx; index++){
+          for (int kk = 0; kk < NSPEEDS; kk++){
+            cells[kk * params.nx * params.ny + index + i * n_rows * params.nx] = rece_buffer[index + (ffinish - i * n_rows) * params.nx * kk];
+          }
+        }
+        free(rece_buffer);
+        rece_buffer = NULL;
+      }
+    }
+  }
 
   /* Total/collate time stops here.*/
   gettimeofday(&timstr, NULL);
   col_toc = timstr.tv_sec + (timstr.tv_usec / 1000000.0);
   tot_toc = col_toc;
+
+  MPI_Finalize();
+  if (rank != MASTER)
+    return EXIT_SUCCESS;
   
   /* write final values and free memory */
   printf("==done==\n");
@@ -191,6 +271,10 @@ int main(int argc, char* argv[])
   printf("Elapsed Total time:\t\t\t%.6lf (s)\n",   tot_toc  - tot_tic);
   write_values(params, cells, obstacles, av_vels);
   finalise(&params, &cells, &tmp_cells, &obstacles, &av_vels);
+
+  free(send_line_buffer);
+  free(rece_line_buffer);
+  free(small_buffer);
 
   return EXIT_SUCCESS;
 }
@@ -203,9 +287,58 @@ void pointer_swap(float** A, float** B){
 
 int timestep(const t_param params, float* restrict cells, float* restrict tmp_cells, const int* restrict obstacles, float* av_velocity)
 {
-  accelerate_flow(params, cells, obstacles);
+  // if (start < params.ny - 2 && finish > params.ny - 2)
+    accelerate_flow(params, cells, obstacles);
+
+  int left = (rank == 0) ? (size - 1) : (rank - 1);
+  int right = (rank + 1) % size;
+
+  int finish_left = rank == 0 ? params.ny - 1 : start - 1;
+
+  for (int i = 0; i < params.nx; i++){
+    for (int kk = 0; kk < NSPEEDS; kk++){
+      send_line_buffer[i + kk * params.nx] = cells[kk * params.nx * params.ny + i + start * params.nx];
+    }
+  }
+
+  if (rank % 2 == 0){
+    MPI_Send(send_line_buffer, params.nx * NSPEEDS, MPI_FLOAT, left, 0, MPI_COMM_WORLD);
+    MPI_Recv(rece_line_buffer, params.nx * NSPEEDS, MPI_FLOAT, right, 0, MPI_COMM_WORLD, &status);
+
+    for (int i = 0; i < params.nx; i++){
+      for (int kk = 0; kk < NSPEEDS; kk++){
+        send_line_buffer[i + kk * params.nx] = cells[kk * params.nx * params.ny + i + (finish - 1) * params.nx];
+        cells[kk * params.nx * params.ny + i + right * n_rows * params.nx] = rece_line_buffer[i + kk * params.nx];
+      }
+    }
+
+    MPI_Send(send_line_buffer, params.nx * NSPEEDS, MPI_FLOAT, right, 0, MPI_COMM_WORLD);
+    MPI_Recv(rece_line_buffer, params.nx * NSPEEDS, MPI_FLOAT, left, 0, MPI_COMM_WORLD, &status);
+  }
+  else {
+    MPI_Recv(rece_line_buffer, params.nx * NSPEEDS, MPI_FLOAT, right, 0, MPI_COMM_WORLD, &status);
+    MPI_Send(send_line_buffer, params.nx * NSPEEDS, MPI_FLOAT, left, 0, MPI_COMM_WORLD);
+
+    for (int i = 0; i < params.nx; i++){
+      for (int kk = 0; kk < NSPEEDS; kk++){
+        send_line_buffer[i + kk * params.nx] = cells[kk * params.nx * params.ny + i + (finish - 1) * params.nx];
+        cells[kk * params.nx * params.ny + i + right * n_rows * params.nx] = rece_line_buffer[i + kk * params.nx];
+      }
+    }
+  
+    MPI_Recv(rece_line_buffer, params.nx * NSPEEDS, MPI_FLOAT, left, 0, MPI_COMM_WORLD, &status);  
+    MPI_Send(send_line_buffer, params.nx * NSPEEDS, MPI_FLOAT, right, 0, MPI_COMM_WORLD);
+  }
+
+  for (int i = 0; i < params.nx; i++){
+    for (int kk = 0; kk < NSPEEDS; kk++){
+      cells[kk * params.nx * params.ny + i + finish_left * params.nx] = rece_line_buffer[i + kk * params.nx];
+    }
+  }
 
   reision(params, cells, tmp_cells, obstacles, av_velocity);
+
+  MPI_Barrier(MPI_COMM_WORLD);
 
   return EXIT_SUCCESS;
 }
@@ -248,7 +381,7 @@ int accelerate_flow(const t_param params, float* restrict cells, const int* rest
   return EXIT_SUCCESS;
 }
 
-int reision(const t_param params, const float*restrict cells,  float*restrict tmp_cells, const int* restrict obstacles, float* av_velocity){
+int reision(const t_param params, const float*restrict cells,  float*restrict tmp_cells, const int* restrict obstacles, float* av_vels){
   __assume(params.nx % ALIGNMENT == 0);
   __assume(params.ny % ALIGNMENT == 0);
   __assume_aligned(cells, ALIGNMENT);
@@ -258,22 +391,28 @@ int reision(const t_param params, const float*restrict cells,  float*restrict tm
   float counter = 0.0;
   float local_velocity = 0.0;
 
-
   // const float w0 = 4.f / 9.f;  /* weighting factor          */
   // const float w1 = 1.f / 9.f;  /* weighting factor          */
   // const float w2 = 1.f / 36.f; /*                           */
 
-  for (int j = 0; j < params.ny; j++){
+  // #pragma omp simd collapse(2) reduction(+:local_velocity) reduction(+:counter)
+  for (int j = start; j < finish; j++){
     const int y_n = (j + 1) % params.ny;
     const int y_s = (j == 0) ? (j + params.ny - 1) : (j - 1);
+    
+    __assume(y_n < finish);
+    __assume(y_s < finish - 1);
 
     #pragma omp simd reduction(+:local_velocity) reduction(+:counter)
     for (int i = 0; i < params.nx; i++){
+      __assume((obstacles[i + j * params.nx]) < 2);
+
       const int x_e = (i + 1) % params.nx;
       const int x_w = (i == 0) ? (i + params.nx - 1) : (i - 1);
 
-      
-      
+      __assume(x_e < params.nx);
+      __assume(x_w < params.nx - 1);
+
         /* compute local density total */
         const float snapshot[9] = {
             cells[i + j * params.nx],
@@ -285,10 +424,7 @@ int reision(const t_param params, const float*restrict cells,  float*restrict tm
             cells[6 * params.nx * params.ny + x_e + y_s*params.nx],
             cells[7 * params.nx * params.ny + x_e + y_n*params.nx],
             cells[8 * params.nx * params.ny + x_w + y_n*params.nx]
-          
         };
-
-
 
         /* compute x velocity component */
         const float u_x = (snapshot[1]
@@ -327,17 +463,17 @@ int reision(const t_param params, const float*restrict cells,  float*restrict tm
         {
           local_density += snapshot[kk];
         }
-        const float factor = local_density - (u_sq * c_sq) / (2.f * local_density);
+        const float factor = local_density - (u_sq * 3) / (2.f * local_density);
         const int boolean = obstacles[i + j * params.nx];
         counter += 1 - boolean;
 
         float vel_density = 0.0;
 
-        #pragma omp simd reduction(+:vel_density)
+        #pragma omp simd 
         for (int kk = 0; kk < NSPEEDS; kk++){
           tmp_cells[kk * params.nx * params.ny + i + j * params.nx] = boolean * snapshot[lookup[kk]] + !boolean * 
-                                                    (snapshot[kk] * (1 - params.omega) + params.omega * W[kk] * 
-                                                          (u[kk] * c_sq * (1 + (u[kk] * c_sq) / (2.f * local_density)) + factor));
+                                                                      (snapshot[kk] * (1 - params.omega) + params.omega * W[kk] * 
+                                                                      (u[kk] * 3 * (1 + (u[kk] * 3) / (2.f * local_density)) + factor));
           vel_density += tmp_cells[kk * params.nx * params.ny + i + j * params.nx];
         }
 
@@ -346,13 +482,29 @@ int reision(const t_param params, const float*restrict cells,  float*restrict tm
     }
   }
 
+  if (rank != MASTER){
+    small_buffer[0] = local_velocity;
+    small_buffer[1] = counter;
+
+    MPI_Send(small_buffer, 2, MPI_FLOAT, MASTER, 0, MPI_COMM_WORLD);
+  }
+  else {
+    for (int i = 0; i < size; i++){
+      if (i != MASTER){
+        MPI_Recv(small_buffer, 2, MPI_FLOAT, i, 0, MPI_COMM_WORLD, &status);
+        
+        local_velocity += small_buffer[0];
+        counter += small_buffer[1];
+      }
+    }
+    *av_vels = local_velocity/counter;
+  }
   // if (counter == 0) counter++;
-  *av_velocity = local_velocity/counter;
 
   return EXIT_SUCCESS;
 }
 
-float av_velocity(const t_param params, const float* restrict cells, const int* restrict obstacles)
+t_tuple av_velocity(const t_param params, const float* restrict cells, const int* restrict obstacles)
 {
   __assume(params.nx % ALIGNMENT == 0);
   __assume(params.ny % ALIGNMENT == 0);
@@ -366,7 +518,7 @@ float av_velocity(const t_param params, const float* restrict cells, const int* 
   tot_u = 0.f;
 
   /* loop over all non-blocked cells */
-  for (int jj = 0; jj < params.ny; jj++)
+  for (int jj = start; jj < finish; jj++)
   {
     #pragma omp simd reduction(+:tot_cells) reduction(+:tot_u)
     for (int ii = 0; ii < params.nx; ii++)
@@ -406,7 +558,8 @@ float av_velocity(const t_param params, const float* restrict cells, const int* 
     }
   }
 
-  return tot_u / (float)tot_cells;
+  t_tuple r = {tot_u, (float)tot_cells};
+  return r;
 }
 
 int initialise(const char* paramfile, const char* obstaclefile,
@@ -609,8 +762,9 @@ int finalise(const t_param* params, float** cells_ptr, float** tmp_cells_ptr,
 float calc_reynolds(const t_param params, float* cells, int* obstacles)
 {
   const float viscosity = 1.f / 6.f * (2.f / params.omega - 1.f);
+  t_tuple av_vel = av_velocity(params, cells, obstacles);
 
-  return av_velocity(params, cells, obstacles) * params.reynolds_dim / viscosity;
+  return (av_vel.x / av_vel.y) * params.reynolds_dim / viscosity;
 }
 
 float total_density(const t_param params, const float* restrict cells)
@@ -634,7 +788,6 @@ float total_density(const t_param params, const float* restrict cells)
 int write_values(const t_param params, const float* restrict cells, const int* restrict obstacles, float* av_vels)
 {
   FILE* fp;                     /* file pointer */
-  const float c_sq = 1.f / 3.f; /* sq. of speed of sound */
   float local_density;         /* per grid cell sum of densities */
   float pressure;              /* fluid pressure in grid cell */
   float u_x;                   /* x-component of velocity in grid cell */
